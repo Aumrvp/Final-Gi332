@@ -1,4 +1,6 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using TMPro;
 using Unity.Netcode;
@@ -20,7 +22,7 @@ public class LobbyAndRelayManager : MonoBehaviour
     [Header("Level Settings")]
     [Tooltip("กดปุ่ม + เพื่อเพิ่มรายชื่อ Scene ด่านต่างๆ ตามลำดับ")]
     public List<string> levelScenes = new List<string>();
-    private int currentLevelIndex = 0; // ตัวจำว่าตอนนี้อยู่ด่านที่เท่าไหร่
+    private int currentLevelIndex = 0;
 
     [Header("UI Panels")]
     public GameObject nameInputPanel;
@@ -40,17 +42,19 @@ public class LobbyAndRelayManager : MonoBehaviour
     private Lobby currentLobby;
     private const int MaxPlayers = 4;
 
+    // [เพิ่มใหม่] ตัวควบคุมสำหรับสั่งยกเลิกระบบ Heartbeat ป้องกัน Memory Leak
+    private CancellationTokenSource heartbeatSource;
+
     private void Awake()
     {
-        // ป้องกันไม่ให้ Manager ตัวนี้ถูกทำลายตอนเปลี่ยนด่าน (เพื่อให้มันจำ Level Index ได้)
         if (Instance == null)
         {
             Instance = this;
-            DontDestroyOnLoad(gameObject); // <--- คำสั่งสำคัญที่ทำให้รอดจากการเปลี่ยน Scene
+            DontDestroyOnLoad(gameObject);
         }
         else
         {
-            Destroy(gameObject); // ถ้ามีซ้ำให้ทำลายทิ้ง
+            Destroy(gameObject);
         }
     }
 
@@ -68,7 +72,7 @@ public class LobbyAndRelayManager : MonoBehaviour
         {
             if (levelScenes.Count > 0)
             {
-                currentLevelIndex = 0; // เริ่มต้นที่ด่านแรก (Index 0)
+                currentLevelIndex = 0;
                 NetworkManager.Singleton.SceneManager.LoadScene(levelScenes[currentLevelIndex], LoadSceneMode.Single);
             }
             else
@@ -78,31 +82,25 @@ public class LobbyAndRelayManager : MonoBehaviour
         }
     }
 
-    // สร้างฟังก์ชันใหม่สำหรับให้ Host กดเพื่อไปด่านต่อไป
     public void HostLoadNextLevel()
     {
         if (!NetworkManager.Singleton.IsServer) return;
 
-        currentLevelIndex++; // ขยับไปด่านถัดไป
+        currentLevelIndex++;
 
         if (currentLevelIndex < levelScenes.Count)
         {
-            // โหลดด่านถัดไป
             NetworkManager.Singleton.SceneManager.LoadScene(levelScenes[currentLevelIndex], LoadSceneMode.Single);
         }
         else
         {
             Debug.Log("จบทุกด่านแล้ว! พากลับหน้า Lobby");
-            // วนกลับมาด่านแรก หรือหน้า Lobby (อย่าลืมใส่ชื่อซีน Lobby ของคุณตรงนี้)
             NetworkManager.Singleton.SceneManager.LoadScene("LobbyScene", LoadSceneMode.Single);
-
-            // รีเซ็ต UI ให้กลับมาหน้าแรก
             SwitchToPanel(nameInputPanel);
         }
     }
 
-    // ================== ส่วนจัดการ UI และ Relay (คงเดิม) ==================
-    // ... โค้ดส่วนที่เหลือ (OnConfirmNameClicked, CreateLobby, JoinLobby ฯลฯ) วางต่อตรงนี้ได้เลยครับ ...
+    // ================== ส่วนจัดการ UI และ Relay ==================
 
     public void OnConfirmNameClicked()
     {
@@ -153,7 +151,9 @@ public class LobbyAndRelayManager : MonoBehaviour
             };
             currentLobby = await LobbyService.Instance.CreateLobbyAsync("Smash Lobby", MaxPlayers, lobbyOptions);
 
-            KeepLobbyAlive(currentLobby.Id);
+            // [แก้ไข] ส่ง Token ไปคุม Heartbeat
+            heartbeatSource = new CancellationTokenSource();
+            KeepLobbyAlive(currentLobby.Id, heartbeatSource.Token);
 
             NetworkManager.Singleton.GetComponent<UnityTransport>().SetRelayServerData(
                 allocation.RelayServer.IpV4, (ushort)allocation.RelayServer.Port, allocation.AllocationIdBytes, allocation.Key, allocation.ConnectionData);
@@ -195,12 +195,92 @@ public class LobbyAndRelayManager : MonoBehaviour
         catch (LobbyServiceException e) { Debug.LogError(e); }
     }
 
-    private async void KeepLobbyAlive(string lobbyId)
+    // [แก้ไข] อัปเกรดเป็น Awaitable + CancellationToken
+    private async void KeepLobbyAlive(string lobbyId, CancellationToken token)
     {
-        while (currentLobby != null)
+        try
         {
-            await Task.Delay(15000);
-            if (currentLobby != null) await LobbyService.Instance.SendHeartbeatPingAsync(lobbyId);
+            while (currentLobby != null && !token.IsCancellationRequested)
+            {
+                // ใช้ Awaitable ของ Unity 6 แทน Task.Delay
+                await Awaitable.WaitForSecondsAsync(15f, token);
+                if (currentLobby != null)
+                {
+                    await LobbyService.Instance.SendHeartbeatPingAsync(lobbyId);
+                }
+            }
         }
+        catch (OperationCanceledException)
+        {
+            Debug.Log("[LobbyManager] ระบบส่งสัญญาณ Heartbeat ถูกระงับเรียบร้อยแล้ว");
+        }
+    }
+
+    // ================== [เพิ่มใหม่] ระบบออกจาก Lobby ==================
+
+    /// <summary>
+    /// ผูกฟังก์ชันนี้เข้ากับปุ่ม "Leave Room" หรือ "Back" ในหน้า Waiting Room UI
+    /// </summary>
+    public async void OnClickLeaveLobby()
+    {
+        await LeaveLobbyAsync();
+    }
+
+    private async Awaitable LeaveLobbyAsync()
+    {
+        if (currentLobby == null) return;
+
+        string lobbyId = currentLobby.Id;
+        string playerId = AuthenticationService.Instance.PlayerId;
+
+        try
+        {
+            // 1. ระงับ Heartbeat (ถ้าเป็น Host) ป้องกัน Memory Leak
+            if (heartbeatSource != null)
+            {
+                heartbeatSource.Cancel();
+                heartbeatSource.Dispose();
+                heartbeatSource = null;
+            }
+
+            // 2. ออกจาก Lobby ผ่าน Service
+            if (currentLobby.HostId == playerId)
+            {
+                // ถ้าเป็นหัวห้อง ใหลบห้องทิ้งไปเลย
+                await LobbyService.Instance.DeleteLobbyAsync(lobbyId);
+                Debug.Log("Host Deleted the Lobby");
+            }
+            else
+            {
+                // ถ้าเป็นผู้เล่นทั่วไป ให้ถอดชื่อตัวเองออก
+                await LobbyService.Instance.RemovePlayerAsync(lobbyId, playerId);
+                Debug.Log("Client Left the Lobby");
+            }
+
+            // 3. ปิดการเชื่อมต่อของ Netcode For GameObjects (Relay)
+            if (NetworkManager.Singleton != null)
+            {
+                NetworkManager.Singleton.Shutdown();
+            }
+
+            // 4. ล้างค่าข้อมูลห้องเพื่อไม่ให้ค้าง
+            currentLobby = null;
+
+            // 5. เปลี่ยน UI กลับไปหน้าเมนู
+            SwitchToPanel(lobbyMenuPanel);
+        }
+        catch (LobbyServiceException e)
+        {
+            Debug.LogError($"เกิดข้อผิดพลาดตอนออกห้อง: {e.Message}");
+        }
+    }
+
+    public void ExitGame()
+    {
+#if UNITY_EDITOR
+        UnityEditor.EditorApplication.isPlaying = false;
+#else
+        Application.Quit();
+#endif
     }
 }
