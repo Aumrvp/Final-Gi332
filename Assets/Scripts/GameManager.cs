@@ -160,7 +160,7 @@ public class GameManager : NetworkBehaviour
         if (timerText == null) return;
 
         int ceil = Mathf.CeilToInt(newValue);
-        timerText.text = $"⏱ {ceil}";
+        timerText.text = $"Time : {ceil}";
 
         if (newValue > lowTimeThreshold)
         {

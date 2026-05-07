@@ -20,6 +20,9 @@ public class SmashUIManager : MonoBehaviour
     [Header("Visual Feedback")]
     public SceneSmashAnimator sceneSmashAnimator;
 
+    [Header("Audio SFX")]
+    [SerializeField] private AudioData smashClickSfx;
+
     private Coroutine _idlePulse;
     private Coroutine _punch;
 
@@ -51,6 +54,11 @@ public class SmashUIManager : MonoBehaviour
 
     public void OnPressSmashButton()
     {
+        if (smashClickSfx != null && AudioManager.Instance != null)
+        {
+            AudioManager.Instance.PlaySFX(smashClickSfx);
+        }
+
         if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsConnectedClient) return;
         if (GameManager.Instance == null || !GameManager.Instance.isGameActive.Value) return;
 
@@ -149,7 +157,7 @@ public class SmashUIManager : MonoBehaviour
             StartCoroutine(BounceIn(winnerPanel.transform));
         }
         if (winnerText != null)
-            winnerText.text = $"<size=150%>🏆</size>\n<b><color=#FFD700>{winnerName}</color></b>\n<color=#FFFFFF>WINS!</color>\n\n<color=#88FF88><size=70%>Score: {score} pts</size></color>";
+            winnerText.text = $"<size=150%></size>\n<b><color=#FFD700>{winnerName}</color></b>\n<color=#FFFFFF>WINS!</color>\n\n<color=#88FF88><size=70%>Score: {score} pts</size></color>";
         if (smashButton != null) smashButton.SetActive(false);
 
         if (NetworkManager.Singleton.IsServer)
@@ -196,4 +204,24 @@ public class SmashUIManager : MonoBehaviour
             LobbyAndRelayManager.Instance?.HostLoadNextLevel();
         }
     }
+
+    public void OnClickExitToMainMenu()
+    {
+        Debug.Log("[UI] User clicked Exit to Main Menu");
+
+        // ตรวจสอบว่ามี Instance ของ Manager หลักอยู่หรือไม่
+        if (LobbyAndRelayManager.Instance != null)
+        {
+            // เรียกใช้ Logic การ Clean up และโหลด Scene ที่เราเขียนไว้ใน Manager หลัก
+            LobbyAndRelayManager.Instance.LeaveGameAndReturnToMenu();
+        }
+        else
+        {
+            Debug.LogError("LobbyAndRelayManager Instance not found! Loading Scene 0 manually.");
+            // Fallback กรณีหา Manager ไม่เจอ (ไม่ควรเกิดขึ้นหากใช้ Singleton ถูกต้อง)
+            NetworkManager.Singleton?.Shutdown();
+            UnityEngine.SceneManagement.SceneManager.LoadScene(0);
+        }
+    }
+
 }
