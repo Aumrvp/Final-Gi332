@@ -58,7 +58,7 @@ public class ScoreboardManager : MonoBehaviour
     {
         // ระบบเรียงลำดับคนที่คะแนนสูงสุดของเพื่อนคุณ
         var sorted = players.OrderByDescending(p => p.currentScore.Value).ToList();
-        string[] medals = { "1", "2", "3", "4 " };
+        string[] medals = { "🥇", "🥈", "🥉", "4 " };
         string[] scoreColors = { "#FFD700", "#C0C0C0", "#CD7F32", "#FFFFFF" };
 
         string board = "<b><color=#FFD700>══ SCOREBOARD ══</color></b>\n\n";

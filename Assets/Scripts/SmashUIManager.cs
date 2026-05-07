@@ -1,7 +1,6 @@
 ﻿using System.Collections;
 using Unity.Netcode;
 using UnityEngine;
-using UnityEngine.UI;
 using TMPro;
 
 public class SmashUIManager : MonoBehaviour
@@ -17,6 +16,12 @@ public class SmashUIManager : MonoBehaviour
     public GameObject smashButton;
     public GameObject rematchButton;
 
+    [Header("Rematch Button Label")]
+    [Tooltip("ถ้าไม่ใส่ จะหา TextMeshProUGUI ในลูกของ rematchButton อัตโนมัติ")]
+    public TextMeshProUGUI rematchButtonLabel;
+    public string nextLevelText = "Next Level";
+    public string backToLobbyText = "Back to Lobby";
+
     [Header("Visual Feedback")]
     public SceneSmashAnimator sceneSmashAnimator;
 
@@ -27,30 +32,20 @@ public class SmashUIManager : MonoBehaviour
 
     private void Start()
     {
-        if (rematchButton != null)
-        {
-            rematchButton.SetActive(false);
-            var btn = rematchButton.GetComponent<Button>();
-            if (btn != null)
-            {
-                btn.onClick.RemoveListener(OnClickRematch);
-                btn.onClick.AddListener(OnClickRematch);
-            }
-        }
-
-        if (smashButton != null)
-        {
-            var btn = smashButton.GetComponent<Button>();
-            if (btn != null)
-            {
-                btn.onClick.RemoveListener(OnPressSmashButton);
-                btn.onClick.AddListener(OnPressSmashButton);
-            }
-        }
+        if (rematchButton != null) rematchButton.SetActive(false);
     }
 
     public void OnPressSmashButton()
     {
+        if (GlobalAudioManager.Instance != null)
+        {
+            OnCliclPlaySmashSound();
+        }
+        else
+        {
+            Debug.LogWarning("UIAudioManager หายไป! อย่าลืมเอาไปวางใน Scene นะครับ");
+        }
+
         if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsConnectedClient) return;
         if (GameManager.Instance == null || !GameManager.Instance.isGameActive.Value) return;
 
@@ -154,7 +149,11 @@ public class SmashUIManager : MonoBehaviour
 
         if (NetworkManager.Singleton.IsServer)
         {
-            if (rematchButton != null) rematchButton.SetActive(true);
+            if (rematchButton != null)
+            {
+                rematchButton.SetActive(true);
+                UpdateRematchButtonLabel();
+            }
         }
         else
         {
@@ -162,6 +161,17 @@ public class SmashUIManager : MonoBehaviour
         }
 
         if (winnerAnimator != null) winnerAnimator.SetTrigger("Show");
+    }
+
+    private void UpdateRematchButtonLabel()
+    {
+        if (rematchButtonLabel == null && rematchButton != null)
+            rematchButtonLabel = rematchButton.GetComponentInChildren<TextMeshProUGUI>(true);
+
+        if (rematchButtonLabel == null) return;
+
+        bool isLast = LobbyAndRelayManager.Instance != null && LobbyAndRelayManager.Instance.IsLastLevel();
+        rematchButtonLabel.text = isLast ? backToLobbyText : nextLevelText;
     }
 
     private IEnumerator BounceIn(Transform t)
@@ -190,10 +200,41 @@ public class SmashUIManager : MonoBehaviour
 
     public void OnClickRematch() // ทำงานเมื่อกดปุ่ม "ไปด่านต่อไป"
     {
+        Debug.Log("[SmashUI] กดปุ่มเปลี่ยนด่านแล้ว! กำลังตรวจสอบสิทธิ์...");
+
+        if (NetworkManager.Singleton == null)
+        {
+            Debug.LogError("[SmashUI] ไม่พบ NetworkManager (คุณอาจไม่ได้ต่อเน็ตหรือเริ่มเกมจาก Lobby)");
+            return;
+        }
+
         if (NetworkManager.Singleton.IsServer)
         {
-            // เรียกใช้ระบบโหลดด่านของ Manager หลักของเรา
-            LobbyAndRelayManager.Instance?.HostLoadNextLevel();
+            Debug.Log("[SmashUI] คุณคือ Host! สั่งให้ LobbyManager โหลดด่านต่อไป...");
+
+            if (LobbyAndRelayManager.Instance != null)
+            {
+                LobbyAndRelayManager.Instance.HostLoadNextLevel();
+            }
+            else
+            {
+                Debug.LogError("[SmashUI] ❌ พัง! ไม่พบ LobbyAndRelayManager! คุณได้เริ่มเกมจากด่าน LobbyScene หรือไม่?");
+            }
         }
+        else
+        {
+            Debug.LogWarning("[SmashUI] คุณเป็นแค่ Client ไม่มีสิทธิ์กดปุ่มนี้ (ปุ่มนี้ควรจะซ่อนอยู่)");
+        }
+    }
+
+    public void OnCliclPlaySmashSound()
+    {
+        GlobalAudioManager.Instance.PlayClickSound();
+    }
+
+    // Backward compat: Game_Level2 scene's UnityEvent references "OnClickNextLevel"
+    public void OnClickNextLevel()
+    {
+        OnClickRematch();
     }
 }

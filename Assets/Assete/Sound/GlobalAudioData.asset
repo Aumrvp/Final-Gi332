@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f4ee1f442cfa03c4485468b5fb945418, type: 3}
+  m_Name: GlobalAudioData
+  m_EditorClassIdentifier: Assembly-CSharp::GlobalAudioData
+  defaultBGM: {fileID: 8300000, guid: 432366704bd98134ebfb43088fd10b3b, type: 3}
+  sceneBGMList:
+  - sceneName: Game_Level1
+    bgmClip: {fileID: 8300000, guid: 9066981d012dffc4488eecbb8d09b355, type: 3}
+  - sceneName: Game_Level2
+    bgmClip: {fileID: 8300000, guid: 9066981d012dffc4488eecbb8d09b355, type: 3}
+  bgmVolume: 0.5
+  countdownTick: {fileID: 0}
+  countdownGo: {fileID: 0}
+  buttonClick: {fileID: 8300000, guid: fc609fad5229f034f8d21979ccce3b65, type: 3}
+  sfxVolume: 1
