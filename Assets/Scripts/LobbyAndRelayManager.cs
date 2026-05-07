@@ -11,11 +11,15 @@ using Unity.Services.Relay;
 using Unity.Services.Relay.Models;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 
 public class LobbyAndRelayManager : MonoBehaviour
 {
     public static LobbyAndRelayManager Instance;
+
+    // เก็บชื่อผู้เล่นเป็น static เพื่อให้จำค่าข้าม Scene ได้
     public static string PlayerName = "Player";
+    private bool isServicesInitialized = false;
 
     [Header("Level Settings")]
     public List<string> levelScenes = new List<string>();
@@ -26,36 +30,128 @@ public class LobbyAndRelayManager : MonoBehaviour
     public GameObject lobbyMenuPanel;
     public GameObject waitingRoomPanel;
 
-    [Header("Name Input UI")]
+    [Header("UI Inputs & Texts")]
     public TMP_InputField nameInput;
-
-    [Header("Lobby Menu UI")]
     public TMP_InputField joinInput;
-
-    [Header("Waiting Room UI")]
     public TextMeshProUGUI lobbyCodeText;
-    public GameObject hostStartGameButton;
+
+    [Header("UI Buttons (Assign in Inspector)")]
+    // [Architect Note] ต้องลากปุ่มจาก Hierarchy มาใส่ช่องพวกนี้ทั้งหมด
+    public Button confirmNameBtn;
+    public Button createLobbyBtn;
+    public Button joinLobbyBtn;
+    public Button leaveWaitingRoomBtn;
+    public Button copyCodeBtn;
+    public Button hostStartGameBtn; // ปุ่มเริ่มเกมสำหรับ Host
 
     private Lobby currentLobby;
     private const int MaxPlayers = 4;
 
     private void Awake()
     {
+        // [Architect Pattern]: Singleton & DDOL
         if (Instance == null)
         {
             Instance = this;
             DontDestroyOnLoad(gameObject);
+            SetupButtonListeners(); // ผูกปุ่มครั้งแรกที่เริ่มเกม
         }
-        else
+        else if (Instance != this)
         {
+            // [Architect Pattern]: Reference Handover
+            // ส่งมอบ UI ชุดใหม่จาก Scene ที่เพิ่งโหลดมา ให้กับตัวหลัก แล้วทำลายตัวเองทิ้ง
+            Instance.UpdateUIReferences(this);
             Destroy(gameObject);
         }
     }
 
     async void Start()
     {
-        SwitchToPanel(nameInputPanel);
+        // ถ้าเป็นตัวโคลนที่กำลังจะถูกทำลาย ไม่ต้องทำอะไร
+        if (Instance != this) return;
+
+        UpdateUIState();
         await InitializeAndSignIn();
+    }
+
+    // ================== ระบบ Handover & Event Binding ==================
+
+    /// <summary>
+    /// ผูกฟังก์ชันเข้ากับปุ่มผ่าน Code (Dynamic Binding)
+    /// ป้องกันปัญหาปุ่มพัง (Missing Reference) เมื่อโหลด Scene ใหม่
+    /// </summary>
+    private void SetupButtonListeners()
+    {
+        if (confirmNameBtn)
+        {
+            confirmNameBtn.onClick.RemoveAllListeners();
+            confirmNameBtn.onClick.AddListener(OnConfirmNameClicked);
+        }
+        if (createLobbyBtn)
+        {
+            createLobbyBtn.onClick.RemoveAllListeners();
+            createLobbyBtn.onClick.AddListener(CreateLobbyAndStartHost);
+        }
+        if (joinLobbyBtn)
+        {
+            joinLobbyBtn.onClick.RemoveAllListeners();
+            joinLobbyBtn.onClick.AddListener(OnClickJoinButton);
+        }
+        if (leaveWaitingRoomBtn)
+        {
+            leaveWaitingRoomBtn.onClick.RemoveAllListeners();
+            leaveWaitingRoomBtn.onClick.AddListener(LeaveRoomAndReturnToMenu);
+        }
+        if (copyCodeBtn)
+        {
+            copyCodeBtn.onClick.RemoveAllListeners();
+            copyCodeBtn.onClick.AddListener(CopyLobbyCode);
+        }
+        if (hostStartGameBtn)
+        {
+            hostStartGameBtn.onClick.RemoveAllListeners();
+            hostStartGameBtn.onClick.AddListener(HostStartGame);
+        }
+    }
+
+    /// <summary>
+    /// อัปเดตตัวแปรทั้งหมดให้ชี้ไปยัง UI ใน Scene ล่าสุด
+    /// </summary>
+    public void UpdateUIReferences(LobbyAndRelayManager newInstance)
+    {
+        // 1. รับค่า Panel & Input
+        this.nameInputPanel = newInstance.nameInputPanel;
+        this.lobbyMenuPanel = newInstance.lobbyMenuPanel;
+        this.waitingRoomPanel = newInstance.waitingRoomPanel;
+        this.nameInput = newInstance.nameInput;
+        this.joinInput = newInstance.joinInput;
+        this.lobbyCodeText = newInstance.lobbyCodeText;
+
+        // 2. รับค่า Button
+        this.confirmNameBtn = newInstance.confirmNameBtn;
+        this.createLobbyBtn = newInstance.createLobbyBtn;
+        this.joinLobbyBtn = newInstance.joinLobbyBtn;
+        this.leaveWaitingRoomBtn = newInstance.leaveWaitingRoomBtn;
+        this.copyCodeBtn = newInstance.copyCodeBtn;
+        this.hostStartGameBtn = newInstance.hostStartGameBtn;
+
+        // 3. ผูก Event ปุ่มใหม่
+        SetupButtonListeners();
+
+        // 4. อัปเดตหน้าตา UI
+        UpdateUIState();
+    }
+
+    private void UpdateUIState()
+    {
+        if (!string.IsNullOrEmpty(PlayerName) && PlayerName != "Player")
+        {
+            SwitchToPanel(lobbyMenuPanel); // มีชื่อแล้ว ข้ามไปหน้า Lobby
+        }
+        else
+        {
+            SwitchToPanel(nameInputPanel); // ยังไม่มีชื่อ ไปหน้าตั้งชื่อ
+        }
     }
 
     // ================== ระบบสลับด่าน (Level Management) ==================
@@ -78,79 +174,9 @@ public class LobbyAndRelayManager : MonoBehaviour
         {
             NetworkManager.Singleton.SceneManager.LoadScene(levelScenes[currentLevelIndex], LoadSceneMode.Single);
         }
-       
     }
 
-    // ================== ระบบ Leave & Disconnect (New) ==================
-
-    /// <summary>
-    /// ใช้สำหรับกดออกจากหน้า Waiting Room กลับไปหน้า Lobby Menu
-    /// </summary>
-    public async void LeaveRoomAndReturnToMenu()
-    {
-        Debug.Log("[Session] Leaving Waiting Room...");
-
-        // 1. จัดการ Lobby Service
-        if (currentLobby != null)
-        {
-            try
-            {
-                string playerId = AuthenticationService.Instance.PlayerId;
-                if (currentLobby.HostId == playerId)
-                    await LobbyService.Instance.DeleteLobbyAsync(currentLobby.Id);
-                else
-                    await LobbyService.Instance.RemovePlayerAsync(currentLobby.Id, playerId);
-            }
-            catch (System.Exception e) { Debug.LogWarning($"Lobby Error: {e.Message}"); }
-            currentLobby = null;
-        }
-
-        // 2. ปิด Network Connection
-        if (NetworkManager.Singleton != null)
-        {
-            NetworkManager.Singleton.Shutdown();
-        }
-
-        // 3. จัดการ UI
-        SwitchToPanel(lobbyMenuPanel);
-    }
-
-    /// <summary>
-    /// ใช้สำหรับกดออกจาก "ระหว่างเล่นเกม" เพื่อกลับไปหน้าเมนูหลัก
-    /// </summary>
-    public async void LeaveGameAndReturnToMenu()
-    {
-        Debug.Log("[Session] Leaving Game Scene...");
-
-        // 1. จัดการ Lobby Service
-        if (currentLobby != null)
-        {
-            try
-            {
-                if (currentLobby.HostId == AuthenticationService.Instance.PlayerId)
-                    await LobbyService.Instance.DeleteLobbyAsync(currentLobby.Id);
-                else
-                    await LobbyService.Instance.RemovePlayerAsync(currentLobby.Id, AuthenticationService.Instance.PlayerId);
-            }
-            catch { /* Ignore errors during exit */ }
-            currentLobby = null;
-        }
-
-        // 2. Shutdown Network
-        if (NetworkManager.Singleton != null)
-        {
-            NetworkManager.Singleton.Shutdown();
-        }
-
-        // 3. โหลด Scene เริ่มต้นใหม่ (Scene ที่มี UI Lobby)
-        var loadOp = UnityEngine.SceneManagement.SceneManager.LoadSceneAsync(0);
-        while (!loadOp.isDone) await Task.Yield();
-
-        // 4. รีเซ็ต UI Panel
-        SwitchToPanel(lobbyMenuPanel);
-    }
-
-    // ================== ส่วนจัดการระบบพื้นฐาน (Core) ==================
+    // ================== ระบบ Core & Network ==================
 
     public void OnConfirmNameClicked()
     {
@@ -177,15 +203,25 @@ public class LobbyAndRelayManager : MonoBehaviour
 
     private async Task InitializeAndSignIn()
     {
+        if (isServicesInitialized) return;
+
         await UnityServices.InitializeAsync();
         if (!AuthenticationService.Instance.IsSignedIn)
         {
             await AuthenticationService.Instance.SignInAnonymouslyAsync();
         }
+        isServicesInitialized = true;
     }
 
     public async void CreateLobbyAndStartHost()
     {
+        // ปิด NetworkManager ตัวเก่าก่อนถ้ามันค้างอยู่
+        if (NetworkManager.Singleton.IsListening)
+        {
+            NetworkManager.Singleton.Shutdown();
+            await Awaitable.NextFrameAsync();
+        }
+
         try
         {
             Allocation allocation = await RelayService.Instance.CreateAllocationAsync(MaxPlayers - 1);
@@ -196,20 +232,21 @@ public class LobbyAndRelayManager : MonoBehaviour
                 IsPrivate = false,
                 Data = new Dictionary<string, DataObject> { { "RelayCode", new DataObject(DataObject.VisibilityOptions.Public, relayJoinCode) } }
             };
-            currentLobby = await LobbyService.Instance.CreateLobbyAsync("Smash Lobby", MaxPlayers, lobbyOptions);
 
+            currentLobby = await LobbyService.Instance.CreateLobbyAsync("Smash Lobby", MaxPlayers, lobbyOptions);
             KeepLobbyAlive(currentLobby.Id);
 
             NetworkManager.Singleton.GetComponent<UnityTransport>().SetRelayServerData(
                 allocation.RelayServer.IpV4, (ushort)allocation.RelayServer.Port, allocation.AllocationIdBytes, allocation.Key, allocation.ConnectionData);
 
-            NetworkManager.Singleton.StartHost();
-
-            lobbyCodeText.text = currentLobby.LobbyCode;
-            hostStartGameButton.SetActive(true);
-            SwitchToPanel(waitingRoomPanel);
+            if (NetworkManager.Singleton.StartHost())
+            {
+                lobbyCodeText.text = currentLobby.LobbyCode;
+                if (hostStartGameBtn) hostStartGameBtn.gameObject.SetActive(true);
+                SwitchToPanel(waitingRoomPanel);
+            }
         }
-        catch (LobbyServiceException e) { Debug.LogError(e); }
+        catch (LobbyServiceException e) { Debug.LogError($"[Lobby Error] {e.Message}"); }
     }
 
     public void OnClickJoinButton()
@@ -219,6 +256,12 @@ public class LobbyAndRelayManager : MonoBehaviour
 
     private async void JoinLobbyWithCode(string lobbyCode)
     {
+        if (NetworkManager.Singleton.IsListening)
+        {
+            NetworkManager.Singleton.Shutdown();
+            await Awaitable.NextFrameAsync();
+        }
+
         try
         {
             currentLobby = await LobbyService.Instance.JoinLobbyByCodeAsync(lobbyCode);
@@ -228,21 +271,66 @@ public class LobbyAndRelayManager : MonoBehaviour
             NetworkManager.Singleton.GetComponent<UnityTransport>().SetRelayServerData(
                 joinAllocation.RelayServer.IpV4, (ushort)joinAllocation.RelayServer.Port, joinAllocation.AllocationIdBytes, joinAllocation.Key, joinAllocation.ConnectionData, joinAllocation.HostConnectionData);
 
-            NetworkManager.Singleton.StartClient();
-
-            lobbyCodeText.text = currentLobby.LobbyCode;
-            hostStartGameButton.SetActive(false);
-            SwitchToPanel(waitingRoomPanel);
+            if (NetworkManager.Singleton.StartClient())
+            {
+                lobbyCodeText.text = currentLobby.LobbyCode;
+                if (hostStartGameBtn) hostStartGameBtn.gameObject.SetActive(false); // Client เริ่มเกมไม่ได้
+                SwitchToPanel(waitingRoomPanel);
+            }
         }
-        catch (LobbyServiceException e) { Debug.LogError(e); }
+        catch (LobbyServiceException e) { Debug.LogError($"[Lobby Error] {e.Message}"); }
     }
 
     private async void KeepLobbyAlive(string lobbyId)
     {
         while (currentLobby != null)
         {
-            await Task.Delay(15000);
-            if (currentLobby != null) await LobbyService.Instance.SendHeartbeatPingAsync(lobbyId);
+            // [Unity 6 Feature]: Awaitable ประหยัด Memory กว่า Task.Delay
+            await Awaitable.WaitForSecondsAsync(15f);
+
+            if (currentLobby != null)
+            {
+                try { await LobbyService.Instance.SendHeartbeatPingAsync(lobbyId); }
+                catch { /* ป้องกัน Error หาก Lobby โดนทำลายไปแล้วระหว่างรอ */ }
+            }
+        }
+    }
+
+    // ================== ระบบ Leave & Clean up ==================
+
+    public async void LeaveRoomAndReturnToMenu()
+    {
+        await CleanUpLobby();
+        if (NetworkManager.Singleton != null) NetworkManager.Singleton.Shutdown();
+        SwitchToPanel(lobbyMenuPanel);
+    }
+
+    public async void LeaveGameAndReturnToMenu()
+    {
+        await CleanUpLobby();
+        if (NetworkManager.Singleton != null) NetworkManager.Singleton.Shutdown();
+
+        // โหลด Scene หน้าเมนูใหม่ (Scene 0)
+        var loadOp = UnityEngine.SceneManagement.SceneManager.LoadSceneAsync(0);
+        while (!loadOp.isDone)
+        {
+            await Awaitable.NextFrameAsync();
+        }
+    }
+
+    private async Task CleanUpLobby()
+    {
+        if (currentLobby != null)
+        {
+            try
+            {
+                if (currentLobby.HostId == AuthenticationService.Instance.PlayerId)
+                    await LobbyService.Instance.DeleteLobbyAsync(currentLobby.Id);
+                else
+                    await LobbyService.Instance.RemovePlayerAsync(currentLobby.Id, AuthenticationService.Instance.PlayerId);
+            }
+            catch (System.Exception e) { Debug.LogWarning($"Lobby CleanUp Warning: {e.Message}"); }
+            finally { currentLobby = null; }
         }
     }
 
